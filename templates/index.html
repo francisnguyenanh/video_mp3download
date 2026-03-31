@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Video Downloader</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <style>
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        .animate-spin {
+            animation: spin 1s linear infinite;
+        }
+        .toast {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            padding: 16px;
+            border-radius: 8px;
+            color: white;
+            font-weight: 500;
+            z-index: 1000;
+            animation: slideIn 0.3s ease-out;
+        }
+        @keyframes slideIn {
+            from {
+                transform: translateX(400px);
+                opacity: 0;
+            }
+            to {
+                transform: translateX(0);
+                opacity: 1;
+            }
+        }
+        .toast.error {
+            background-color: #ef4444;
+        }
+        .toast.success {
+            background-color: #10b981;
+        }
+        .toast.warning {
+            background-color: #f59e0b;
+        }
+        .progress-bar {
+            height: 6px;
+            background-color: #e5e7eb;
+            border-radius: 3px;
+            overflow: hidden;
+        }
+        .progress-fill {
+            height: 100%;
+            background-color: #3b82f6;
+            transition: width 0.3s ease;
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-gray-100">
+    <div class="min-h-screen p-6">
+        <!-- Header -->
+        <div class="max-w-4xl mx-auto">
+            <div class="mb-8">
+                <div class="flex items-center gap-3 mb-4">
+                    <span class="text-4xl">🎬</span>
+                    <h1 class="text-4xl font-bold">Video Downloader</h1>
+                </div>
+                <p class="text-gray-400">Download videos from YouTube and online movie sites</p>
+            </div>
+
+            <!-- Input Section -->
+            <div class="bg-gray-800 rounded-lg p-6 mb-8 shadow-lg">
+                <label class="block text-sm font-semibold mb-3 text-gray-300">
+                    Paste Video URLs (one per line or separated by commas)
+                </label>
+                <textarea
+                    id="urlInput"
+                    class="w-full bg-gray-700 text-gray-100 border border-gray-600 rounded-lg p-4 mb-4 focus:border-blue-500 focus:outline-none resize-none min-h-24"
+                    placeholder="https://www.youtube.com/watch?v=...&#10;https://example.com/video/..."
+                ></textarea>
+
+                <!-- Format Selection -->
+                <div class="grid grid-cols-1 gap-4 mb-4 p-4 bg-gray-700 rounded-lg">
+                    <!-- Mode Selection -->
+                    <div>
+                        <label class="block text-sm font-semibold mb-3 text-gray-300">
+                            Download Mode:
+                        </label>
+                        <div class="flex gap-4">
+                            <label class="flex items-center gap-2 cursor-pointer">
+                                <input type="radio" name="mode" value="video" checked onchange="onModeChange('video')" class="w-4 h-4">
+                                <span class="text-gray-100">🎬 Video</span>
+                            </label>
+                            <label class="flex items-center gap-2 cursor-pointer">
+                                <input type="radio" name="mode" value="audio" onchange="onModeChange('audio')" class="w-4 h-4">
+                                <span class="text-gray-100">🎵 Audio (MP3)</span>
+                            </label>
+                        </div>
+                    </div>
+
+                    <!-- Video Options -->
+                    <div id="video-options">
+                        <div class="grid grid-cols-2 gap-4">
+                            <div>
+                                <label class="block text-sm font-semibold mb-2 text-gray-300">Video Format:</label>
+                                <select id="video-format" class="w-full bg-gray-600 text-gray-100 border border-gray-500 rounded p-2">
+                                    <option value="mp4">MP4 (Recommended)</option>
+                                    <option value="webm">WebM</option>
+                                    <option value="mkv">MKV</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="block text-sm font-semibold mb-2 text-gray-300">Quality:</label>
+                                <select id="video-quality" class="w-full bg-gray-600 text-gray-100 border border-gray-500 rounded p-2">
+                                    <option value="best">Best Available</option>
+                                    <option value="1080p">1080p</option>
+                                    <option value="720p">720p</option>
+                                    <option value="480p">480p</option>
+                                    <option value="360p">360p</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Audio Options -->
+                    <div id="audio-options" class="hidden">
+                        <div class="grid grid-cols-2 gap-4">
+                            <div>
+                                <label class="block text-sm font-semibold mb-2 text-gray-300">Audio Format:</label>
+                                <select id="audio-format" class="w-full bg-gray-600 text-gray-100 border border-gray-500 rounded p-2">
+                                    <option value="mp3">MP3 (Recommended)</option>
+                                    <option value="m4a">M4A</option>
+                                    <option value="ogg">OGG</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="block text-sm font-semibold mb-2 text-gray-300">Bitrate:</label>
+                                <select id="audio-bitrate" class="w-full bg-gray-600 text-gray-100 border border-gray-500 rounded p-2">
+                                    <option value="320">320 kbps (Best)</option>
+                                    <option value="192" selected>192 kbps</option>
+                                    <option value="128">128 kbps</option>
+                                    <option value="96">96 kbps</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="flex gap-3">
+                    <button
+                        onclick="addToQueue()"
+                        class="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 px-4 rounded-lg transition flex items-center justify-center gap-2"
+                    >
+                        <span id="btn-icon">🎬</span> <span id="btn-text">Add Video to Queue</span>
+                    </button>
+                    <button
+                        onclick="clearInput()"
+                        class="bg-gray-700 hover:bg-gray-600 text-gray-100 font-semibold py-3 px-6 rounded-lg transition"
+                    >
+                        Clear
+                    </button>
+                </div>
+            </div>
+
+            <!-- Queue Stats -->
+            <div class="bg-gray-800 rounded-lg p-4 mb-8 shadow-lg">
+                <div class="grid grid-cols-2 gap-4 sm:grid-cols-4">
+                    <div class="text-center">
+                        <div class="text-2xl font-bold text-blue-400" id="statPending">0</div>
+                        <div class="text-xs text-gray-400 mt-1">Pending</div>
+                    </div>
+                    <div class="text-center">
+                        <div class="text-2xl font-bold text-yellow-400" id="statDownloading">0</div>
+                        <div class="text-xs text-gray-400 mt-1">Downloading</div>
+                    </div>
+                    <div class="text-center">
+                        <div class="text-2xl font-bold text-green-400" id="statCompleted">0</div>
+                        <div class="text-xs text-gray-400 mt-1">Completed</div>
+                    </div>
+                    <div class="text-center">
+                        <div class="text-2xl font-bold text-red-400" id="statFailed">0</div>
+                        <div class="text-xs text-gray-400 mt-1">Failed</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Download Queue -->
+            <div class="bg-gray-800 rounded-lg p-6 mb-8 shadow-lg">
+                <div class="flex items-center justify-between mb-4">
+                    <h2 class="text-2xl font-bold flex items-center gap-2">
+                        <span>📋</span> Download Queue
+                    </h2>
+                    <button
+                        onclick="clearCompleted()"
+                        class="bg-gray-700 hover:bg-gray-600 text-gray-100 text-sm font-semibold py-2 px-3 rounded transition"
+                    >
+                        Clear Completed
+                    </button>
+                </div>
+                
+                <div id="queueContainer" class="space-y-3 max-h-96 overflow-y-auto">
+                    <div class="text-center text-gray-400 py-8">
+                        <p>No downloads added yet</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Downloaded Files -->
+            <div class="bg-gray-800 rounded-lg p-6 shadow-lg">
+                <h2 class="text-2xl font-bold flex items-center gap-2 mb-4">
+                    <span>📁</span> Downloaded Files
+                </h2>
+                
+                <div id="filesContainer" class="space-y-2 max-h-96 overflow-y-auto">
+                    <div class="text-center text-gray-400 py-8">
+                        <p>No files downloaded yet</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast Container -->
+    <div id="toastContainer"></div>
+
+    <script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>
