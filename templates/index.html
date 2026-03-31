@@ -79,6 +79,19 @@
                     placeholder="https://www.youtube.com/watch?v=...&#10;https://example.com/video/..."
                 ></textarea>
 
+                <!-- Error messages display -->
+                <div id="errorMessages" class="mb-4 hidden">
+                    <div class="bg-red-900 border border-red-700 rounded-lg p-4">
+                        <div class="flex items-start gap-3">
+                            <span class="text-red-400 font-bold">⚠️</span>
+                            <div>
+                                <p class="font-semibold text-red-200 mb-2">Validation Errors:</p>
+                                <ul id="errorList" class="list-disc list-inside text-red-300 text-sm space-y-1"></ul>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- Format Selection -->
                 <div class="grid grid-cols-1 gap-4 mb-4 p-4 bg-gray-700 rounded-lg">
                     <!-- Mode Selection -->

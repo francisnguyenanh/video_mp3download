@@ -2,22 +2,37 @@ import os
 import queue
 import threading
 import uuid
+import logging
 from flask import Flask, render_template, request, send_file, jsonify
 from flask_socketio import SocketIO, emit
 from downloader import VideoDownloader
 from pathlib import Path
+from config import config
+from validators import URLValidator, validate_download_request, FilenameValidator
+
+# Configure logging
+logging.basicConfig(
+    level=getattr(logging, config.LOG_LEVEL),
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler(config.LOG_FILE),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
-app.config['SECRET_KEY'] = 'your-secret-key-change-in-production'
+app.config['SECRET_KEY'] = config.SECRET_KEY
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
 
-OUTPUT_DIR = "./downloads"
-downloader = VideoDownloader(OUTPUT_DIR)
+OUTPUT_DIR = config.OUTPUT_DIR
+downloader = VideoDownloader(OUTPUT_DIR, enable_acceleration=config.ENABLE_ACCELERATION)
 
-download_queue = queue.Queue()
+download_queue = queue.Queue(maxsize=config.MAX_QUEUE_SIZE)
 current_jobs = {}
 job_lock = threading.Lock()
 queue_worker_running = False
+active_downloads = 0  # Track concurrent downloads
 
 
 def make_progress_hook(job_id):
@@ -166,44 +181,56 @@ def index():
 
 @app.route('/api/add', methods=['POST'])
 def add_to_queue():
-    """Add URLs to download queue with format selection."""
+    """Add URLs to download queue with comprehensive validation."""
     try:
+        logger.info("Received download request")
+        
         data = request.get_json()
+        if not data:
+            logger.warning("Empty JSON request")
+            return jsonify({'error': 'Request body must be JSON'}), 400
+        
         urls = data.get('urls', [])
-        mode = data.get('mode', 'video')  # 'video' or 'audio'
+        mode = data.get('mode', 'video')
         format_type = data.get('format', 'mp4')
         quality = data.get('quality', 'best')
         bitrate = data.get('audio_bitrate', '192')
         
-        if not urls:
-            return jsonify({'error': 'No URLs provided'}), 400
+        # Comprehensive validation
+        is_valid, valid_urls, errors = validate_download_request(
+            urls, mode, format_type, quality, bitrate
+        )
+        
+        if not is_valid or not valid_urls:
+            logger.warning(f"Validation failed: {errors}")
+            return jsonify({
+                'error': 'Validation failed',
+                'details': errors
+            }), 400
+        
+        # Check queue size
+        with job_lock:
+            if len(current_jobs) >= config.MAX_QUEUE_SIZE:
+                logger.warning("Queue is full")
+                return jsonify({'error': f'Queue is full (max {config.MAX_QUEUE_SIZE})'}), 429
         
         job_ids = []
         duplicate_count = 0
-        invalid_count = 0
         
-        for url in urls:
-            url = url.strip()
-            
-            if not url:
-                continue
-            
-            if not is_valid_url(url):
-                invalid_count += 1
-                continue
-            
+        for url in valid_urls:
             # Check for duplicates
             with job_lock:
                 is_duplicate = any(
-                    job['url'] == url for job in current_jobs.values()
+                    job['url'] == url and job['status'] != 'failed' 
+                    for job in current_jobs.values()
                 )
             
             if is_duplicate:
                 duplicate_count += 1
+                logger.warning(f"Duplicate URL: {url}")
+                continue
             
             job_id = str(uuid.uuid4())
-            
-            # Determine icon based on mode
             icon = '🎬' if mode == 'video' else '🎵'
             
             with job_lock:
@@ -232,23 +259,25 @@ def add_to_queue():
             })
             
             job_ids.append(job_id)
+            logger.info(f"Queued job {job_id}: {url[:50]}...")
         
         socketio.emit('queue_update', {'jobs': get_jobs_summary()}, namespace='/')
         
-        warnings = []
-        if duplicate_count > 0:
-            warnings.append(f"{duplicate_count} URL(s) already in queue")
-        if invalid_count > 0:
-            warnings.append(f"{invalid_count} URL(s) are invalid")
-        
-        return jsonify({
+        response = {
             'success': True,
             'job_ids': job_ids,
-            'warnings': warnings
-        }), 201
+            'warnings': []
+        }
+        
+        if duplicate_count > 0:
+            response['warnings'].append(f"{duplicate_count} duplicate URL(s) skipped")
+        
+        logger.info(f"Successfully added {len(job_ids)} jobs to queue")
+        return jsonify(response), 200
     
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        logger.error(f"Error adding to queue: {str(e)}", exc_info=True)
+        return jsonify({'error': 'Internal server error', 'details': str(e)}), 500
 
 
 @app.route('/api/status', methods=['GET'])

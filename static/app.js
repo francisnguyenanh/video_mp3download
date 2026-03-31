@@ -135,8 +135,10 @@ socket.on('file_deleted', (data) => {
 // Add URLs to download queue
 async function addToQueue() {
     const input = document.getElementById('urlInput').value.trim();
+    clearErrors(); // Clear previous errors
     
     if (!input) {
+        showError('Please paste at least one URL');
         showToast('Please paste at least one URL', 'warning');
         return;
     }
@@ -162,6 +164,7 @@ async function addToQueue() {
         .filter(url => url.length > 0);
     
     if (urlList.length === 0) {
+        showError('No valid URLs found');
         showToast('No valid URLs found', 'warning');
         return;
     }
@@ -184,6 +187,7 @@ async function addToQueue() {
         const data = await response.json();
         
         if (response.ok) {
+            clearErrors(); // Clear any existing errors
             showToast(`✅ Added ${data.job_ids.length} URL(s) to queue`, 'success');
             
             if (data.warnings && data.warnings.length > 0) {
@@ -194,9 +198,17 @@ async function addToQueue() {
             
             clearInput();
         } else {
-            showToast(`Error: ${data.error}`, 'error');
+            // Handle detailed validation errors from server
+            if (data.details && data.details.length > 0) {
+                showErrors(data.details);
+                showToast('Validation errors detected', 'error');
+            } else {
+                showError(data.error || 'An error occurred');
+                showToast(`Error: ${data.error || 'An error occurred'}`, 'error');
+            }
         }
     } catch (error) {
+        showError(`Network error: ${error.message}`);
         showToast(`Error: ${error.message}`, 'error');
     }
 }
@@ -494,6 +506,51 @@ function showToast(message, type = 'info') {
             container.removeChild(toast);
         }, 300);
     }, 3000);
+}
+
+// Display multiple validation errors in the error messages panel
+function showErrors(errorArray) {
+    const errorMessages = document.getElementById('errorMessages');
+    const errorList = document.getElementById('errorList');
+    
+    if (!errorMessages || !errorList) {
+        console.error('Error display elements not found');
+        return;
+    }
+    
+    // Clear previous errors
+    errorList.innerHTML = '';
+    
+    // Add each error as a list item
+    if (Array.isArray(errorArray) && errorArray.length > 0) {
+        errorArray.forEach(error => {
+            const li = document.createElement('li');
+            li.textContent = error;
+            errorList.appendChild(li);
+        });
+        
+        // Show the error messages panel
+        errorMessages.classList.remove('hidden');
+    }
+}
+
+// Display a single error message
+function showError(message) {
+    showErrors([message]);
+}
+
+// Clear all error messages
+function clearErrors() {
+    const errorMessages = document.getElementById('errorMessages');
+    const errorList = document.getElementById('errorList');
+    
+    if (errorMessages) {
+        errorMessages.classList.add('hidden');
+    }
+    
+    if (errorList) {
+        errorList.innerHTML = '';
+    }
 }
 
 // Add slideOut animation
