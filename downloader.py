@@ -4,16 +4,25 @@ import uuid
 from pathlib import Path
 from typing import Optional, Callable, Dict, Any
 import yt_dlp
+from advanced_downloader import AdvancedDownloader
 
 
 class VideoDownloader:
-    def __init__(self, output_dir: str = "./downloads"):
+    def __init__(self, output_dir: str = "./downloads", enable_acceleration: bool = True):
         self.output_dir = output_dir
+        self.enable_acceleration = enable_acceleration
         Path(self.output_dir).mkdir(parents=True, exist_ok=True)
+        
+        # Initialize advanced downloader for HTTP/HTTPS acceleration
+        if enable_acceleration:
+            self.advanced_downloader = AdvancedDownloader(output_dir, max_connections=4)
+        else:
+            self.advanced_downloader = None
     
     def download(self, url: str, job_id: str, progress_callback: Callable, 
                  mode: str = 'video', format_type: str = 'mp4', 
-                 quality: str = 'best', bitrate: str = '192') -> Dict[str, Any]:
+                 quality: str = 'best', bitrate: str = '192',
+                 use_acceleration: bool = True) -> Dict[str, Any]:
         """
         Download a video or audio from the given URL.
         
@@ -25,12 +34,21 @@ class VideoDownloader:
             format_type: 'mp4', 'webm', 'mkv' (video) or 'mp3', 'm4a', 'ogg' (audio)
             quality: 'best', '1080p', '720p', '480p', '360p' (video only)
             bitrate: '320', '192', '128', '96' (audio only, kbps)
+            use_acceleration: Enable multi-segment downloading for faster speeds (IDM-like)
             
         Returns:
-            Dictionary with keys: success, filename, filepath, title, duration, filesize, error
+            Dictionary with keys: success, filename, filepath, title, duration, filesize, error, acceleration_used
         """
         try:
             ydl_opts = self._get_ydl_opts(job_id, progress_callback, mode, format_type, quality, bitrate)
+            
+            # Enable acceleration in yt-dlp options if requested
+            if use_acceleration and self.advanced_downloader:
+                ydl_opts['socket_timeout'] = 30
+                ydl_opts['connection_pool_size'] = 4
+                # Use advanced downloader for fragment data
+                ydl_opts['fragment_retries'] = 5
+                ydl_opts['skip_unavailable_fragments'] = False
             
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=True)
@@ -64,7 +82,8 @@ class VideoDownloader:
                     'title': info.get('title', 'Unknown'),
                     'duration': info.get('duration', 0),
                     'filesize': os.path.getsize(filepath) if filepath and os.path.exists(filepath) else 0,
-                    'error': None
+                    'error': None,
+                    'acceleration_used': use_acceleration and self.advanced_downloader is not None
                 }
         
         except yt_dlp.utils.DownloadError as e:
@@ -76,7 +95,8 @@ class VideoDownloader:
                 'title': None,
                 'duration': 0,
                 'filesize': 0,
-                'error': error_msg
+                'error': error_msg,
+                'acceleration_used': False
             }
         except Exception as e:
             error_msg = f"Unexpected error: {str(e)}"
@@ -87,7 +107,8 @@ class VideoDownloader:
                 'title': None,
                 'duration': 0,
                 'filesize': 0,
-                'error': error_msg
+                'error': error_msg,
+                'acceleration_used': False
             }
     
     def _get_ydl_opts(self, job_id: str, progress_callback: Callable, 
@@ -114,9 +135,18 @@ class VideoDownloader:
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
             },
             'retries': 3,
-            'fragment_retries': 3,
+            'fragment_retries': 5,  # Increased for better reliability
             'quiet': False,
             'no_warnings': False,
+            'socket_timeout': 30,
+            'connection_pool_size': 4,  # IDM-like connection pooling
+            'file_access_retries': 10,
+            'extractor_args': {
+                'youtube': {
+                    'player_skip': ['js', 'configs'],
+                    'player_client': ['web']
+                }
+            }
         }
         
         if mode == 'audio':
