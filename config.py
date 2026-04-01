@@ -4,7 +4,7 @@ Handles all application settings with support for environment variables
 """
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 
 
@@ -38,7 +38,7 @@ class AppConfig:
     # Validation settings
     MIN_FILE_SIZE: int = 1024  # 1 KB
     MAX_FILE_SIZE: int = 50 * 1024 * 1024 * 1024  # 50 GB
-    ALLOWED_PROTOCOLS: list = ['http', 'https', 'ftp']
+    ALLOWED_PROTOCOLS: list = field(default_factory=lambda: ['http', 'https', 'ftp'])
     
     # UI settings
     THEME: str = os.getenv('THEME', 'dark')

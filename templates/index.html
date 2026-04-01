@@ -207,7 +207,7 @@
                         onclick="clearCompleted()"
                         class="bg-gray-700 hover:bg-gray-600 text-gray-100 text-sm font-semibold py-2 px-3 rounded transition"
                     >
-                        Clear Completed
+                        Clear Failed
                     </button>
                 </div>
                 
@@ -220,9 +220,18 @@
 
             <!-- Downloaded Files -->
             <div class="bg-gray-800 rounded-lg p-6 shadow-lg">
-                <h2 class="text-2xl font-bold flex items-center gap-2 mb-4">
-                    <span>📁</span> Downloaded Files
-                </h2>
+                <div class="flex items-center justify-between mb-4">
+                    <h2 class="text-2xl font-bold flex items-center gap-2">
+                        <span>📁</span> Downloaded Files
+                    </h2>
+                    <button
+                        onclick="openFolder()"
+                        class="bg-green-700 hover:bg-green-600 text-white text-sm font-semibold py-2 px-4 rounded transition flex items-center gap-2"
+                        title="Open downloads folder"
+                    >
+                        <span>📂</span> Open Folder
+                    </button>
+                </div>
                 
                 <div id="filesContainer" class="space-y-2 max-h-96 overflow-y-auto">
                     <div class="text-center text-gray-400 py-8">

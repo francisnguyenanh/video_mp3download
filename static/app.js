@@ -74,10 +74,18 @@ socket.on('queue_update', (data) => {
 
 // Handle download progress
 socket.on('download_progress', (data) => {
-    if (jobs[data.job_id]) {
-        jobs[data.job_id].progress = data;
-        updateJobUI(data.job_id);
+    if (!jobs[data.job_id]) {
+        // Job not yet in local state — request a queue refresh
+        return;
     }
+    jobs[data.job_id].status = 'downloading';
+    jobs[data.job_id].progress = {
+        percent: data.percent,
+        speed: data.speed,
+        eta: data.eta
+    };
+    updateJobInPlace(data.job_id);
+    updateStats();
 });
 
 // Handle download complete
@@ -89,11 +97,9 @@ socket.on('download_complete', (data) => {
         jobs[data.job_id].title = data.title;
     }
     
-    stats.downloading--;
-    stats.completed++;
-    
-    updateJobUI(data.job_id);
     updateStats();
+    // Remove completed job from queue display
+    updateQueueUI();
     loadFiles();
     showToast(`✅ Download complete: ${data.title}`, 'success');
 });
@@ -105,10 +111,7 @@ socket.on('download_error', (data) => {
         jobs[data.job_id].error = data.error;
     }
     
-    stats.downloading--;
-    stats.failed++;
-    
-    updateJobUI(data.job_id);
+    updateQueueUI();
     updateStats();
     showToast(`❌ Download failed: ${data.error}`, 'error');
 });
@@ -298,22 +301,24 @@ async function clearCompleted() {
     }
 }
 
-// Update queue UI
+// Update queue UI — only show pending / downloading / failed
 function updateQueueUI() {
     const container = document.getElementById('queueContainer');
     
-    if (Object.keys(jobs).length === 0) {
+    const activeJobs = Object.values(jobs).filter(j => j.status !== 'completed');
+    
+    if (activeJobs.length === 0) {
         container.innerHTML = `
             <div class="text-center text-gray-400 py-8">
-                <p>No downloads added yet</p>
+                <p>No active downloads</p>
             </div>
         `;
         return;
     }
     
-    container.innerHTML = Object.values(jobs)
+    container.innerHTML = activeJobs
         .sort((a, b) => {
-            const statusOrder = { downloading: 0, pending: 1, completed: 2, failed: 3 };
+            const statusOrder = { downloading: 0, pending: 1, failed: 2 };
             return statusOrder[a.status] - statusOrder[b.status];
         })
         .map(job => renderJobCard(job))
@@ -322,117 +327,99 @@ function updateQueueUI() {
 
 // Render individual job card
 function renderJobCard(job) {
-    let statusIcon = '';
-    let statusColor = '';
-    let statusText = '';
-    
-    switch (job.status) {
-        case 'pending':
-            statusIcon = '⏳';
-            statusColor = 'border-gray-600';
-            statusText = 'Pending';
-            break;
-        case 'downloading':
-            statusIcon = '🔄';
-            statusColor = 'border-yellow-500';
-            statusText = 'Downloading';
-            break;
-        case 'completed':
-            statusIcon = '✅';
-            statusColor = 'border-green-500';
-            statusText = 'Completed';
-            break;
-        case 'failed':
-            statusIcon = '❌';
-            statusColor = 'border-red-500';
-            statusText = 'Failed';
-            break;
-    }
-    
+    const icon = statusIcon(job.status);
+    const borderColor = statusBorderColor(job.status);
+    const statusText = job.status.charAt(0).toUpperCase() + job.status.slice(1);
+
     // Format badge
     const modeIcon = job.icon || (job.mode === 'video' ? '🎬' : '🎵');
-    const qualityLabel = job.mode === 'video' ? job.quality : job.quality + 'k';
-    const formatBadge = `${modeIcon} [${job.format.toUpperCase()} • ${qualityLabel}]`;
-    
-    let progressHTML = '';
-    
-    if (job.status === 'downloading') {
-        const percent = job.progress?.percent || '0%';
-        const percentValue = parseInt(percent) || 0;
-        const speed = job.progress?.speed || 'N/A';
-        const eta = job.progress?.eta || 'N/A';
-        
-        progressHTML = `
-            <div class="mt-3">
-                <div class="progress-bar">
-                    <div class="progress-fill" style="width: ${percentValue}%"></div>
-                </div>
-                <div class="flex justify-between items-center mt-2 text-sm text-gray-400">
-                    <span>${percent}</span>
-                    <span>• ${speed} • ETA ${eta}</span>
-                </div>
-            </div>
-        `;
-    } else if (job.status === 'failed') {
-        progressHTML = `
-            <div class="mt-3 text-sm text-red-400">
-                <strong>Error:</strong> ${job.error || 'Unknown error'}
-            </div>
-        `;
-    }
-    
-    let actionHTML = '';
-    
-    if (job.status === 'completed' && job.filename) {
-        const fileExt = job.filename.split('.').pop().toLowerCase();
-        const fileIcon = iconMap[fileExt] || '📄';
-        
-        actionHTML = `
-            <div class="mt-3 flex gap-2">
-                <button
-                    onclick="downloadFile('${job.filename}')"
-                    class="flex-1 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold py-2 px-3 rounded transition"
-                >
-                    ↓ Download
-                </button>
-                <span class="text-sm text-gray-400 py-2">
-                    ${job.filesize || 'Unknown size'}
-                </span>
-            </div>
-        `;
-    }
-    
+    const qualityLabel = job.mode === 'video' ? job.quality : (job.quality + 'k');
+    const formatBadge = `${modeIcon} [${(job.format || '').toUpperCase()} &bull; ${qualityLabel}]`;
+
     return `
-        <div class="bg-gray-700 border-l-4 ${statusColor} p-4 rounded">
+        <div class="bg-gray-700 border-l-4 ${borderColor} p-4 rounded" data-job-id="${job.job_id}">
             <div class="flex items-start justify-between">
                 <div class="flex-1">
-                    <div class="flex items-center gap-2 mb-2">
-                        <span class="text-xl">${statusIcon}</span>
+                    <div class="job-status flex items-center gap-2 mb-2">
+                        <span class="text-xl">${icon}</span>
                         <span class="text-xs font-bold text-blue-400">${formatBadge}</span>
                         <span class="text-sm font-semibold text-gray-400">${statusText}</span>
                     </div>
                     <div class="text-sm text-gray-300 break-all">${job.url}</div>
                     ${job.title ? `<div class="text-sm text-gray-400 mt-1"><strong>${job.title}</strong></div>` : ''}
-                    ${progressHTML}
-                    ${actionHTML}
+                    <div class="job-progress">${renderProgressHTML(job)}</div>
                 </div>
             </div>
         </div>
     `;
 }
 
-// Update individual job UI
-function updateJobUI(jobId) {
-    const container = document.getElementById('queueContainer');
-    const existingCards = container.querySelectorAll('[data-job-id]');
-    
-    // If we don't have data-job-id attributes, rebuild the whole UI
-    if (existingCards.length === 0) {
+// Update individual job UI in-place (for smooth progress without full re-render)
+function updateJobInPlace(jobId) {
+    const el = document.querySelector(`[data-job-id="${jobId}"]`);
+    if (!el) {
+        // Element not found — do a full rebuild
         updateQueueUI();
         return;
     }
-    
+    const job = jobs[jobId];
+    if (!job) return;
+
+    // Update border color
+    el.className = el.className.replace(/border-\S+/, statusBorderColor(job.status));
+
+    // Update status icon + text
+    const statusEl = el.querySelector('.job-status');
+    if (statusEl) statusEl.innerHTML = `<span class="text-xl">${statusIcon(job.status)}</span><span class="text-sm font-semibold text-gray-400">${job.status.charAt(0).toUpperCase() + job.status.slice(1)}</span>`;
+
+    // Update progress bar
+    const progressEl = el.querySelector('.job-progress');
+    if (progressEl) progressEl.innerHTML = renderProgressHTML(job);
+}
+
+function statusIcon(status) {
+    return { pending: '⏳', downloading: '🔄', completed: '✅', failed: '❌' }[status] || '❓';
+}
+
+function statusBorderColor(status) {
+    return { pending: 'border-gray-600', downloading: 'border-yellow-500', completed: 'border-green-500', failed: 'border-red-500' }[status] || 'border-gray-600';
+}
+
+function renderProgressHTML(job) {
+    if (job.status === 'downloading') {
+        const percent = job.progress?.percent || '0%';
+        const percentValue = parseFloat(percent) || 0;
+        const speed = job.progress?.speed || 'N/A';
+        const eta = job.progress?.eta || 'N/A';
+        return `
+            <div class="mt-3">
+                <div class="progress-bar">
+                    <div class="progress-fill" style="width: ${percentValue}%"></div>
+                </div>
+                <div class="flex justify-between items-center mt-2 text-sm text-gray-400">
+                    <span class="font-bold text-blue-400">${percent}</span>
+                    <span>${speed} &bull; ETA ${eta}</span>
+                </div>
+            </div>
+        `;
+    } else if (job.status === 'failed') {
+        return `<div class="mt-3 text-sm text-red-400"><strong>Error:</strong> ${job.error || 'Unknown error'}</div>`;
+    }
+    return '';
+}
+
+// Update individual job UI
+function updateJobUI(jobId) {
     updateQueueUI();
+}
+
+const videoExts = new Set(['mp4', 'mkv', 'webm', 'avi', 'mov']);
+const audioExts = new Set(['mp3', 'm4a', 'ogg', 'wav', 'flac']);
+
+function getFileBadge(ext) {
+    if (videoExts.has(ext)) return '<span class="text-xs font-bold bg-blue-700 text-blue-100 px-2 py-0.5 rounded">VIDEO</span>';
+    if (audioExts.has(ext)) return '<span class="text-xs font-bold bg-purple-700 text-purple-100 px-2 py-0.5 rounded">AUDIO</span>';
+    return '';
 }
 
 // Update files UI
@@ -453,25 +440,31 @@ function updateFilesUI() {
         .map(file => {
             const fileExt = file.filename.split('.').pop().toLowerCase();
             const fileIcon = iconMap[fileExt] || '📄';
+            const badge = getFileBadge(fileExt);
+            const safeFilename = file.filename.replace(/'/g, "\\'");
             
             return `
-                <div class="flex items-center justify-between bg-gray-700 p-4 rounded hover:bg-gray-650 transition">
+                <div class="flex items-center justify-between bg-gray-700 p-4 rounded hover:bg-gray-600 transition">
                     <div class="flex-1 min-w-0 flex items-center gap-3">
                         <span class="text-2xl">${fileIcon}</span>
                         <div class="flex-1 min-w-0">
-                            <div class="text-sm font-semibold text-gray-100 truncate">${file.filename}</div>
+                            <div class="flex items-center gap-2 mb-1">
+                                ${badge}
+                                <span class="text-xs text-gray-400 uppercase">${fileExt}</span>
+                            </div>
+                            <div class="text-sm font-semibold text-gray-100 truncate" title="${file.filename}">${file.filename}</div>
                             <div class="text-xs text-gray-400 mt-1">${file.size}</div>
                         </div>
                     </div>
                     <div class="flex gap-2 ml-4">
                         <button
-                            onclick="downloadFile('${file.filename}')"
+                            onclick="downloadFile('${safeFilename}')"
                             class="bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold py-2 px-3 rounded transition"
                         >
                             ↓ Download
                         </button>
                         <button
-                            onclick="deleteFile('${file.filename}')"
+                            onclick="deleteFile('${safeFilename}')"
                             class="bg-red-600 hover:bg-red-700 text-white text-sm font-semibold py-2 px-3 rounded transition"
                         >
                             🗑 Delete
@@ -550,6 +543,21 @@ function clearErrors() {
     
     if (errorList) {
         errorList.innerHTML = '';
+    }
+}
+
+// Open downloads folder
+async function openFolder() {
+    try {
+        const response = await fetch('/api/open-folder', { method: 'POST' });
+        const data = await response.json();
+        if (response.ok) {
+            showToast(`📂 Opening folder: ${data.path}`, 'success');
+        } else {
+            showToast(`Cannot open folder: ${data.error}`, 'error');
+        }
+    } catch (error) {
+        showToast(`Error: ${error.message}`, 'error');
     }
 }
 

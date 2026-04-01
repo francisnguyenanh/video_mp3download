@@ -134,17 +134,16 @@ class VideoDownloader:
             'http_headers': {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
             },
-            'retries': 3,
-            'fragment_retries': 5,  # Increased for better reliability
+            'retries': 5,
+            'fragment_retries': 10,
             'quiet': False,
             'no_warnings': False,
             'socket_timeout': 30,
-            'connection_pool_size': 4,  # IDM-like connection pooling
+            'connection_pool_size': 4,
             'file_access_retries': 10,
             'extractor_args': {
                 'youtube': {
-                    'player_skip': ['js', 'configs'],
-                    'player_client': ['web']
+                    'player_client': ['ios', 'android', 'web']
                 }
             }
         }

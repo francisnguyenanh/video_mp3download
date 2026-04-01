@@ -1,4 +1,8 @@
+import eventlet
+eventlet.monkey_patch()
+
 import os
+import sys
 import queue
 import threading
 import uuid
@@ -62,6 +66,7 @@ def make_progress_hook(job_id):
                     'filename': os.path.basename(filename) if filename else 'downloading',
                     'status': 'downloading'
                 }, namespace='/')
+                socketio.sleep(0)  # yield to eventlet so event is delivered immediately
             
             elif d['status'] == 'finished':
                 current_jobs[job_id]['progress'] = {
@@ -218,10 +223,10 @@ def add_to_queue():
         duplicate_count = 0
         
         for url in valid_urls:
-            # Check for duplicates
+            # Check for duplicates (same URL + same mode)
             with job_lock:
                 is_duplicate = any(
-                    job['url'] == url and job['status'] != 'failed' 
+                    job['url'] == url and job['status'] != 'failed' and job.get('mode') == mode
                     for job in current_jobs.values()
                 )
             
@@ -391,6 +396,24 @@ def clear_completed_jobs():
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/api/open-folder', methods=['POST'])
+def open_folder():
+    """Open the downloads folder in the OS file explorer."""
+    try:
+        import subprocess
+        folder = os.path.abspath(OUTPUT_DIR)
+        Path(folder).mkdir(parents=True, exist_ok=True)
+        if os.name == 'nt':
+            subprocess.Popen(['explorer', folder])
+        elif sys.platform == 'darwin':
+            subprocess.Popen(['open', folder])
+        else:
+            subprocess.Popen(['xdg-open', folder])
+        return jsonify({'success': True, 'path': folder}), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
 @socketio.on('connect')
 def handle_connect():
     """Handle client connection."""
@@ -412,12 +435,11 @@ def handle_connect():
 
 
 if __name__ == '__main__':
-    # Start the queue worker thread
-    worker_thread = threading.Thread(target=queue_worker, daemon=True)
-    worker_thread.start()
-    
     # Create downloads directory if it doesn't exist
     Path(OUTPUT_DIR).mkdir(parents=True, exist_ok=True)
     
+    # Start the queue worker as a background task (required for eventlet compatibility)
+    socketio.start_background_task(queue_worker)
+    
     # Run the app
-    socketio.run(app, debug=True, host='0.0.0.0', port=5000, allow_unsafe_werkzeug=True)
+    socketio.run(app, debug=True, host='0.0.0.0', port=5017, allow_unsafe_werkzeug=True)
